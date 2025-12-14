@@ -2,67 +2,91 @@
 #include <SFML/Window.hpp>
 #include <SFML/Window/WindowHandle.hpp>
 #include <Windows.h>
+#include <dwmapi.h>
 #include <iostream>
 #include <optional>
+#include <vector>
 
-// Includes
+// ==========================================
+// MiniAudio Implementation
+#define MINIAUDIO_IMPLEMENTATION
+#include "miniaudio.h"
+// ==========================================
+
 #include "audio/audio_capture.hpp"
 #include "audio/fft_processor.hpp"
 #include "visualizer/bar_visualizer.hpp"
 
-// Define MiniAudio Here
-#define MINIAUDIO_IMPLEMENTATION
-#include "miniaudio.h"
-
 using namespace std;
 
+// --- MODERN TRANSPARENCY (DWM) ---
 void makeWindowTransparent(sf::RenderWindow &window)
 {
     HWND hwnd = static_cast<HWND>(window.getNativeHandle());
-    SetWindowLong(hwnd, GWL_EXSTYLE, GetWindowLong(hwnd, GWL_EXSTYLE) | WS_EX_LAYERED);
-    SetLayeredWindowAttributes(hwnd, RGB(255, 0, 255), 0, LWA_COLORKEY);
+
+    // 1. Force window to be a "Popup" (Standard for overlays)
+    SetWindowLong(hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+
+    // 2. Extend the "Glass Frame" into the whole client area
+    //    This tells Windows 10/11 to handle the alpha channel for us.
+    MARGINS margins;
+    margins.cxLeftWidth = -1; // -1 means "Extend to entire window"
+    margins.cxRightWidth = -1;
+    margins.cyTopHeight = -1;
+    margins.cyBottomHeight = -1;
+
+    DwmExtendFrameIntoClientArea(hwnd, &margins);
 }
 
 void setAlwaysOnTop(sf::RenderWindow &window)
 {
     HWND hwnd = static_cast<HWND>(window.getNativeHandle());
-    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
 }
 
 int main()
 {
-    // 1. Init Audio
-    AudioCapture audio;
-    if (!audio.init())
-    {
-        cerr << "[ERROR] Failed to init audio!" << endl;
-        return -1;
-    }
+    constexpr unsigned int WINDOW_WIDTH = 800;
+    constexpr unsigned int WINDOW_HEIGHT = 200;
+    constexpr int NUM_BARS = 64;
 
-    // 2. Init FFT & Visualizer
-    FftProcessor fft(1024);
-    BarVisualizer visualizer(64, 800.0f, 200.0f);
-    vector<float> bars;
-
-    // 3. Init Window
-    sf::RenderWindow window(sf::VideoMode({800, 200}), "SoundWave", sf::Style::None);
+    // Create Window
+    sf::RenderWindow window(
+        sf::VideoMode({WINDOW_WIDTH, WINDOW_HEIGHT}),
+        "SoundWave",
+        sf::Style::None);
     window.setFramerateLimit(60);
 
-    auto desktop = sf::VideoMode::getDesktopMode();
-    window.setPosition({(int)(desktop.size.x - 800) / 2, (int)(desktop.size.y - 200 - 50)});
+    // Position Window
+    sf::VideoMode desktop = sf::VideoMode::getDesktopMode();
+    window.setPosition({(int)(desktop.size.x - WINDOW_WIDTH) / 2,
+                        (int)(desktop.size.y - WINDOW_HEIGHT - 60)});
 
+    // Apply The Fixes
     makeWindowTransparent(window);
     setAlwaysOnTop(window);
 
-    // UI Border
-    sf::RectangleShape border(sf::Vector2f(800 - 4.0f, 200 - 4.0f));
-    border.setPosition({2.0f, 2.0f});
-    border.setFillColor(sf::Color::Transparent);
-    border.setOutlineColor(sf::Color(0, 255, 255, 100));
-    border.setOutlineThickness(2.0f);
+    // Audio Setup
+    AudioCapture audioCapture;
+    bool audioInitialized = audioCapture.init();
+    if (!audioInitialized)
+        cerr << "[ERROR] Audio Init Failed" << endl;
+
+    // Visualizer Setup
+    FftProcessor fftProcessor(1024);
+    std::vector<float> fftOutput;
+    BarVisualizer visualizer(NUM_BARS, (float)WINDOW_WIDTH, (float)WINDOW_HEIGHT);
+
+    // Background (Toggle with 'B')
+    sf::RectangleShape background(sf::Vector2f((float)WINDOW_WIDTH, (float)WINDOW_HEIGHT));
+    background.setFillColor(sf::Color(10, 10, 20, 200)); // Dark Semi-Transparent
 
     bool isDragging = false;
     sf::Vector2i dragOffset;
+    bool showBackground = false; // Start invisible
+
+    cout << "[INFO] Running using DWM Transparency." << endl;
+    cout << "[INFO] Press 'B' to toggle background box." << endl;
 
     while (window.isOpen())
     {
@@ -75,7 +99,10 @@ int main()
             {
                 if (key->code == sf::Keyboard::Key::Escape)
                     window.close();
+                if (key->code == sf::Keyboard::Key::B)
+                    showBackground = !showBackground;
             }
+
             if (const auto *mouse = event->getIf<sf::Event::MouseButtonPressed>())
             {
                 if (mouse->button == sf::Mouse::Button::Left)
@@ -84,6 +111,7 @@ int main()
                     dragOffset = sf::Mouse::getPosition(window);
                 }
             }
+
             if (const auto *mouse = event->getIf<sf::Event::MouseButtonReleased>())
             {
                 if (mouse->button == sf::Mouse::Button::Left)
@@ -94,17 +122,24 @@ int main()
         if (isDragging)
             window.setPosition(sf::Mouse::getPosition() - dragOffset);
 
-        // --- Logic ---
-        fft.calculate(audio.getAudioBuffer(), bars);
-        visualizer.update(bars);
+        // Logic
+        std::vector<float> audioBuffer = audioCapture.getAudioBuffer();
+        if (!audioBuffer.empty() && audioInitialized)
+        {
+            fftProcessor.calculate(audioBuffer, fftOutput);
+        }
+        visualizer.update(fftOutput);
 
-        // --- Render ---
-        window.clear(sf::Color(255, 0, 255)); // Magenta Key
+        // === RENDER ===
+        // CRITICAL FIX: Clear with Transparent, NOT Magenta
+        window.clear(sf::Color::Transparent);
+
+        if (showBackground)
+            window.draw(background);
 
         visualizer.draw(window);
-        window.draw(border);
-
         window.display();
     }
+
     return 0;
 }
