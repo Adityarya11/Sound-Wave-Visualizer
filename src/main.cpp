@@ -4,23 +4,25 @@
 #include <Windows.h>
 #include <iostream>
 #include <optional>
-#include <vector>
 
-// Include our new visualizer
+// Includes
+#include "audio/audio_capture.hpp"
+#include "audio/fft_processor.hpp"
 #include "visualizer/bar_visualizer.hpp"
+
+// Define MiniAudio Here
+#define MINIAUDIO_IMPLEMENTATION
+#include "miniaudio.h"
 
 using namespace std;
 
-// ... [Keep your existing makeWindowTransparent function] ...
 void makeWindowTransparent(sf::RenderWindow &window)
 {
     HWND hwnd = static_cast<HWND>(window.getNativeHandle());
-    LONG style = GetWindowLong(hwnd, GWL_EXSTYLE);
-    SetWindowLong(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED);
+    SetWindowLong(hwnd, GWL_EXSTYLE, GetWindowLong(hwnd, GWL_EXSTYLE) | WS_EX_LAYERED);
     SetLayeredWindowAttributes(hwnd, RGB(255, 0, 255), 0, LWA_COLORKEY);
 }
 
-// ... [Keep your existing setAlwaysOnTop function] ...
 void setAlwaysOnTop(sf::RenderWindow &window)
 {
     HWND hwnd = static_cast<HWND>(window.getNativeHandle());
@@ -29,33 +31,35 @@ void setAlwaysOnTop(sf::RenderWindow &window)
 
 int main()
 {
-    constexpr unsigned int WINDOW_WIDTH = 800;
-    constexpr unsigned int WINDOW_HEIGHT = 200;
+    // 1. Init Audio
+    AudioCapture audio;
+    if (!audio.init())
+    {
+        cerr << "[ERROR] Failed to init audio!" << endl;
+        return -1;
+    }
 
-    sf::RenderWindow window(
-        sf::VideoMode({WINDOW_WIDTH, WINDOW_HEIGHT}),
-        "SoundWave",
-        sf::Style::None);
+    // 2. Init FFT & Visualizer
+    FftProcessor fft(1024);
+    BarVisualizer visualizer(64, 800.0f, 200.0f);
+    vector<float> bars;
 
+    // 3. Init Window
+    sf::RenderWindow window(sf::VideoMode({800, 200}), "SoundWave", sf::Style::None);
     window.setFramerateLimit(60);
 
-    sf::VideoMode desktop = sf::VideoMode::getDesktopMode();
-    window.setPosition({(int)(desktop.size.x - WINDOW_WIDTH) / 2,
-                        (int)(desktop.size.y - WINDOW_HEIGHT - 60)});
+    auto desktop = sf::VideoMode::getDesktopMode();
+    window.setPosition({(int)(desktop.size.x - 800) / 2, (int)(desktop.size.y - 200 - 50)});
 
     makeWindowTransparent(window);
     setAlwaysOnTop(window);
 
-    // === INIT VISUALIZER ===
-    // 64 bars, fitting the window size
-    BarVisualizer visualizer(64, (float)WINDOW_WIDTH, (float)WINDOW_HEIGHT);
-
-    // UI Setup
-    sf::RectangleShape border(sf::Vector2f(WINDOW_WIDTH - 4.f, WINDOW_HEIGHT - 4.f));
-    border.setPosition({2.f, 2.f});
+    // UI Border
+    sf::RectangleShape border(sf::Vector2f(800 - 4.0f, 200 - 4.0f));
+    border.setPosition({2.0f, 2.0f});
     border.setFillColor(sf::Color::Transparent);
-    border.setOutlineColor(sf::Color(0, 255, 255, 50)); // Lower opacity border
-    border.setOutlineThickness(2.f);
+    border.setOutlineColor(sf::Color(0, 255, 255, 100));
+    border.setOutlineThickness(2.0f);
 
     bool isDragging = false;
     sf::Vector2i dragOffset;
@@ -72,7 +76,6 @@ int main()
                 if (key->code == sf::Keyboard::Key::Escape)
                     window.close();
             }
-
             if (const auto *mouse = event->getIf<sf::Event::MouseButtonPressed>())
             {
                 if (mouse->button == sf::Mouse::Button::Left)
@@ -81,7 +84,6 @@ int main()
                     dragOffset = sf::Mouse::getPosition(window);
                 }
             }
-
             if (const auto *mouse = event->getIf<sf::Event::MouseButtonReleased>())
             {
                 if (mouse->button == sf::Mouse::Button::Left)
@@ -90,23 +92,19 @@ int main()
         }
 
         if (isDragging)
-        {
             window.setPosition(sf::Mouse::getPosition() - dragOffset);
-        }
 
-        // === UPDATE VISUALIZER ===
-        // Pass empty vector to trigger "Demo Mode" (fake waves)
-        visualizer.update({});
+        // --- Logic ---
+        fft.calculate(audio.getAudioBuffer(), bars);
+        visualizer.update(bars);
 
-        // === RENDER ===
-        window.clear(sf::Color(255, 255, 255)); // Magenta key color
+        // --- Render ---
+        window.clear(sf::Color(255, 0, 255)); // Magenta Key
 
-        // Draw visualizer bars
         visualizer.draw(window);
-
         window.draw(border);
+
         window.display();
     }
-
     return 0;
 }
