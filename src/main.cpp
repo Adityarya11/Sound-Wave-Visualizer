@@ -7,75 +7,97 @@
 #include <optional>
 #include <vector>
 
-// Define MiniAudio
+// ==========================================
+// 🔴 CRITICAL FIX: MiniAudio Implementation
+// This creates the actual code for the audio engine.
+// Without this, you get "Unresolved External Symbol" errors.
 #define MINIAUDIO_IMPLEMENTATION
 #include "miniaudio.h"
+// ==========================================
 
+// Audio & Processing
 #include "audio/audio_capture.hpp"
 #include "audio/fft_processor.hpp"
+
+// Visualizer
 #include "visualizer/bar_visualizer.hpp"
 
 using namespace std;
 
-// === THE GLASS FIX ===
+// --- Transparency Helper ---
 void makeWindowTransparent(sf::RenderWindow &window)
 {
     HWND hwnd = static_cast<HWND>(window.getNativeHandle());
 
-    // 1. Set the window to be a "Layered" window (Required for transparency)
-    SetWindowLong(hwnd, GWL_EXSTYLE, WS_EX_APPWINDOW | WS_EX_LAYERED);
+    // 1. Set Layered Window Style (Required for transparency)
+    LONG style = GetWindowLong(hwnd, GWL_EXSTYLE);
+    SetWindowLong(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED);
 
-    // 2. The "Glass" Magic
-    // This tells Windows: "Render the whole window as a glass surface"
-    // The alpha channel (transparency) will be respected by the OS.
-    MARGINS margins = {-1};
-    DwmExtendFrameIntoClientArea(hwnd, &margins);
+    // 2. Set Magenta (255, 0, 255) as the "Key" color
+    // Any pixel of this exact color becomes 100% transparent (invisible)
+    SetLayeredWindowAttributes(hwnd, RGB(255, 0, 255), 0, LWA_COLORKEY);
+
+    // 3. Optional: Add DWM Blur for smoother edges on Windows 10/11
+    DWM_BLURBEHIND bb = {0};
+    bb.dwFlags = DWM_BB_ENABLE | DWM_BB_BLURREGION;
+    bb.fEnable = TRUE;
+    bb.hRgnBlur = CreateRectRgn(0, 0, -1, -1);
+    DwmEnableBlurBehindWindow(hwnd, &bb);
+    DeleteObject(bb.hRgnBlur);
 }
 
 void setAlwaysOnTop(sf::RenderWindow &window)
 {
-    SetWindowPos(static_cast<HWND>(window.getNativeHandle()),
-                 HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+    HWND hwnd = static_cast<HWND>(window.getNativeHandle());
+    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 }
 
+// --- Main ---
 int main()
 {
     constexpr unsigned int WINDOW_WIDTH = 800;
     constexpr unsigned int WINDOW_HEIGHT = 200;
     constexpr int NUM_BARS = 64;
 
-    // Create the Window
+    // Create Window
     sf::RenderWindow window(
         sf::VideoMode({WINDOW_WIDTH, WINDOW_HEIGHT}),
         "SoundWave",
-        sf::Style::None // Borderless
-    );
+        sf::Style::None); // Borderless
     window.setFramerateLimit(60);
 
-    // Position it
+    // Position Window
     sf::VideoMode desktop = sf::VideoMode::getDesktopMode();
     window.setPosition({(int)(desktop.size.x - WINDOW_WIDTH) / 2,
                         (int)(desktop.size.y - WINDOW_HEIGHT - 60)});
 
-    // Apply Transparency
+    // Apply Transparency Fixes
     makeWindowTransparent(window);
     setAlwaysOnTop(window);
 
-    // Setup Audio & Visuals
+    // Init Audio
     AudioCapture audioCapture;
-    audioCapture.init();
+    if (!audioCapture.init())
+    {
+        std::cerr << "[ERROR] Failed to init audio capture!" << std::endl;
+    }
+    else
+    {
+        std::cout << "[INFO] Audio capture ready." << std::endl;
+    }
 
+    // Init Processors
     FftProcessor fftProcessor(1024);
     std::vector<float> fftOutput;
     BarVisualizer visualizer(NUM_BARS, (float)WINDOW_WIDTH, (float)WINDOW_HEIGHT);
 
-    // Optional Background (Toggle 'B')
+    // Background (Toggle with 'B')
     sf::RectangleShape background(sf::Vector2f((float)WINDOW_WIDTH, (float)WINDOW_HEIGHT));
-    background.setFillColor(sf::Color(0, 0, 0, 150)); // Semi-transparent black
+    background.setFillColor(sf::Color(15, 15, 25, 200)); // Semi-transparent dark
 
     bool isDragging = false;
     sf::Vector2i dragOffset;
-    bool showBackground = false;
+    bool showBackground = true;
 
     while (window.isOpen())
     {
@@ -110,21 +132,28 @@ int main()
         if (isDragging)
             window.setPosition(sf::Mouse::getPosition() - dragOffset);
 
-        // Logic
+        // Audio Logic
         std::vector<float> audioBuffer = audioCapture.getAudioBuffer();
         if (!audioBuffer.empty())
             fftProcessor.calculate(audioBuffer, fftOutput);
+
         visualizer.update(fftOutput);
 
-        // === RENDER ===
-        // IMPORTANT: Clear with specific Transparent color
-        window.clear(sf::Color::Transparent);
+        // Render
+        // 1. Clear with Magenta (The Key Color) -> This punches the hole in the window
+        window.clear(sf::Color(255, 0, 255));
 
+        // 2. Draw Background (Optional) -> This draws ON TOP of the transparent hole
         if (showBackground)
+        {
             window.draw(background);
+        }
 
+        // 3. Draw Bars
         visualizer.draw(window);
+
         window.display();
     }
+
     return 0;
 }
