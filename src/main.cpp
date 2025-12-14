@@ -99,7 +99,7 @@ int main()
         visualizer.update({});
 
         // === RENDER ===
-        window.clear(sf::Color(255, 0, 255)); // Magenta key color
+        window.clear(sf::Color(255, 255, 255)); // Magenta key color
 
         // Draw visualizer bars
         visualizer.draw(window);
