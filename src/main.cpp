@@ -7,11 +7,9 @@
 #include <optional>
 #include <vector>
 
-// ==========================================
-// MiniAudio Implementation
+// Define MiniAudio
 #define MINIAUDIO_IMPLEMENTATION
 #include "miniaudio.h"
-// ==========================================
 
 #include "audio/audio_capture.hpp"
 #include "audio/fft_processor.hpp"
@@ -19,29 +17,25 @@
 
 using namespace std;
 
-// --- MODERN TRANSPARENCY (DWM) ---
+// === THE GLASS FIX ===
 void makeWindowTransparent(sf::RenderWindow &window)
 {
     HWND hwnd = static_cast<HWND>(window.getNativeHandle());
 
-    // 1. Force window to be a "Popup" (Standard for overlays)
-    SetWindowLong(hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+    // 1. Set the window to be a "Layered" window (Required for transparency)
+    SetWindowLong(hwnd, GWL_EXSTYLE, WS_EX_APPWINDOW | WS_EX_LAYERED);
 
-    // 2. Extend the "Glass Frame" into the whole client area
-    //    This tells Windows 10/11 to handle the alpha channel for us.
-    MARGINS margins;
-    margins.cxLeftWidth = -1; // -1 means "Extend to entire window"
-    margins.cxRightWidth = -1;
-    margins.cyTopHeight = -1;
-    margins.cyBottomHeight = -1;
-
+    // 2. The "Glass" Magic
+    // This tells Windows: "Render the whole window as a glass surface"
+    // The alpha channel (transparency) will be respected by the OS.
+    MARGINS margins = {-1};
     DwmExtendFrameIntoClientArea(hwnd, &margins);
 }
 
 void setAlwaysOnTop(sf::RenderWindow &window)
 {
-    HWND hwnd = static_cast<HWND>(window.getNativeHandle());
-    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+    SetWindowPos(static_cast<HWND>(window.getNativeHandle()),
+                 HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
 }
 
 int main()
@@ -50,43 +44,38 @@ int main()
     constexpr unsigned int WINDOW_HEIGHT = 200;
     constexpr int NUM_BARS = 64;
 
-    // Create Window
+    // Create the Window
     sf::RenderWindow window(
         sf::VideoMode({WINDOW_WIDTH, WINDOW_HEIGHT}),
         "SoundWave",
-        sf::Style::None);
+        sf::Style::None // Borderless
+    );
     window.setFramerateLimit(60);
 
-    // Position Window
+    // Position it
     sf::VideoMode desktop = sf::VideoMode::getDesktopMode();
     window.setPosition({(int)(desktop.size.x - WINDOW_WIDTH) / 2,
                         (int)(desktop.size.y - WINDOW_HEIGHT - 60)});
 
-    // Apply The Fixes
+    // Apply Transparency
     makeWindowTransparent(window);
     setAlwaysOnTop(window);
 
-    // Audio Setup
+    // Setup Audio & Visuals
     AudioCapture audioCapture;
-    bool audioInitialized = audioCapture.init();
-    if (!audioInitialized)
-        cerr << "[ERROR] Audio Init Failed" << endl;
+    audioCapture.init();
 
-    // Visualizer Setup
     FftProcessor fftProcessor(1024);
     std::vector<float> fftOutput;
     BarVisualizer visualizer(NUM_BARS, (float)WINDOW_WIDTH, (float)WINDOW_HEIGHT);
 
-    // Background (Toggle with 'B')
+    // Optional Background (Toggle 'B')
     sf::RectangleShape background(sf::Vector2f((float)WINDOW_WIDTH, (float)WINDOW_HEIGHT));
-    background.setFillColor(sf::Color(10, 10, 20, 200)); // Dark Semi-Transparent
+    background.setFillColor(sf::Color(0, 0, 0, 150)); // Semi-transparent black
 
     bool isDragging = false;
     sf::Vector2i dragOffset;
-    bool showBackground = false; // Start invisible
-
-    cout << "[INFO] Running using DWM Transparency." << endl;
-    cout << "[INFO] Press 'B' to toggle background box." << endl;
+    bool showBackground = false;
 
     while (window.isOpen())
     {
@@ -111,7 +100,6 @@ int main()
                     dragOffset = sf::Mouse::getPosition(window);
                 }
             }
-
             if (const auto *mouse = event->getIf<sf::Event::MouseButtonReleased>())
             {
                 if (mouse->button == sf::Mouse::Button::Left)
@@ -124,14 +112,12 @@ int main()
 
         // Logic
         std::vector<float> audioBuffer = audioCapture.getAudioBuffer();
-        if (!audioBuffer.empty() && audioInitialized)
-        {
+        if (!audioBuffer.empty())
             fftProcessor.calculate(audioBuffer, fftOutput);
-        }
         visualizer.update(fftOutput);
 
         // === RENDER ===
-        // CRITICAL FIX: Clear with Transparent, NOT Magenta
+        // IMPORTANT: Clear with specific Transparent color
         window.clear(sf::Color::Transparent);
 
         if (showBackground)
@@ -140,6 +126,5 @@ int main()
         visualizer.draw(window);
         window.display();
     }
-
     return 0;
 }
