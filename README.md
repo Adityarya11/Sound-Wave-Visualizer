@@ -90,6 +90,8 @@ If You find this fun and cool then Thanks !!
 
 You can watch the video as well.
 
+[Video](images/Visualiser.mp4)
+
 <video width="1366" height="600" controls>
   <source src="images/Visualiser.mp4" type="video/mp4">
 </video>
