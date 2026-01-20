@@ -72,7 +72,7 @@ Integrated and works flawlessly with the Realtime audio input (Sytem audio, not 
     Navigate to the Release folder and execute the binary.
 
     ```powershell
-    ./Debug/SoundWaveVisualizer.exe
+    ./Release/SoundWaveVisualizer.exe
     ```
 
 ## WIP
