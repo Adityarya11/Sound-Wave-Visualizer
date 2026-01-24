@@ -21,6 +21,7 @@
 
 // Visualizer
 #include "visualizer/bar_visualizer.hpp"
+#include "visualizer/circle_visualizer.hpp"
 
 using namespace std;
 
@@ -89,7 +90,12 @@ int main()
     // Init Processors
     FftProcessor fftProcessor(1024);
     std::vector<float> fftOutput;
-    BarVisualizer visualizer(NUM_BARS, (float)WINDOW_WIDTH, (float)WINDOW_HEIGHT);
+
+    // init
+    //  bar visualiser
+    BarVisualizer barVis(NUM_BARS, (float)WINDOW_WIDTH, (float)WINDOW_HEIGHT);
+    // circular visualiser
+    CircleVisualiser circleVis(120, 100.0f, {(float)WINDOW_WIDTH / 2.0f, (float)WINDOW_HEIGHT / 2.0f});
 
     // Background (Toggle with 'B')
     sf::RectangleShape background(sf::Vector2f((float)WINDOW_WIDTH, (float)WINDOW_HEIGHT));
@@ -98,6 +104,16 @@ int main()
     bool isDragging = false;
     sf::Vector2i dragOffset;
     bool showBackground = true;
+
+    // Load the app Icon
+    sf ::Image icon;
+    if (icon.loadFromFile("images/logo.png"))
+    {
+        window.setIcon(icon);
+    }
+
+    // toggle state  between the visualisers
+    int currentVisualiser = 0; // 0 = Bar, 1 = circle,  toggle with V
 
     while (window.isOpen())
     {
@@ -112,6 +128,9 @@ int main()
                     window.close();
                 if (key->code == sf::Keyboard::Key::B)
                     showBackground = !showBackground;
+
+                if (key->code == sf::Keyboard::Key::V)
+                    currentVisualiser = (currentVisualiser + 1) % 2; // visuliser toggle button
             }
 
             if (const auto *mouse = event->getIf<sf::Event::MouseButtonPressed>())
@@ -137,7 +156,15 @@ int main()
         if (!audioBuffer.empty())
             fftProcessor.calculate(audioBuffer, fftOutput);
 
-        visualizer.update(fftOutput);
+        // new visualiser output for the toggle
+        if (currentVisualiser == 0)
+        {
+            barVis.update(fftOutput);
+        }
+        else
+        {
+            circleVis.update(fftOutput);
+        }
 
         // Render
         // 1. Clear with Magenta (The Key Color) -> This punches the hole in the window
@@ -150,7 +177,14 @@ int main()
         }
 
         // 3. Draw Bars
-        visualizer.draw(window);
+        if (currentVisualiser == 0)
+        {
+            barVis.draw(window);
+        }
+        else
+        {
+            circleVis.draw(window);
+        }
 
         window.display();
     }

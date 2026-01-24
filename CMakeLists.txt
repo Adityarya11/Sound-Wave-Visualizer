@@ -17,6 +17,7 @@ set(SOURCES
     src/audio/fft_processor.cpp
     src/visualizer/bar_visualizer.cpp
     include/kissfft/kiss_fft.c 
+    src/visualizer/circle_visualizer.cpp
 )
 
 add_executable(${PROJECT_NAME} ${SOURCES})
