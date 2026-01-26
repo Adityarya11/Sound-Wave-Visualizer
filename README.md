@@ -90,11 +90,12 @@ If You find this fun and cool then Thanks !!
 
 You can watch the video as well.
 
-[Video](images/Visualiser.mp4)
+<!-- <img src="https://github.com/user-attachments/assets/9400ee43-8f33-4258-ab64-2da620de4e90"
+     width="1366"
+     height="600"
+     alt="Video"> -->
 
-<video width="1366" height="600" controls>
-  <source src="images/Visualiser.mp4" type="video/mp4">
-</video>
+[Watch the video](https://github.com/user-attachments/assets/9400ee43-8f33-4258-ab64-2da620de4e90)
 
 ### Issues or work needed:
 
