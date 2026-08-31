@@ -30,10 +30,10 @@ and it fades away on its own when the music stops.
 
 ### Two modes
 
-| Mode | Look |
-| --- | --- |
+| Mode              | Look                                                                                                                                                                                                       |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Orb** (default) | Circular aurora visualiser. Radius breathes with the beat, the rim spikes with the spectrum, the palette drifts through violet, magenta, cyan and mint. Rendered entirely in a GLSL shader for soft bloom. |
-| **Bars** | Linear spectrum, mirrored around the centre — bass in the middle, pitch rising outward — with a reflection underneath. |
+| **Bars**          | Linear spectrum, mirrored around the centre — bass in the middle, pitch rising outward — with a reflection underneath.                                                                                     |
 
 ### System data flow
 
@@ -94,12 +94,12 @@ cmake --build build-mingw -j 4
 The overlay never takes keyboard focus, so the hotkeys are global — they work
 whatever you happen to be using at the time.
 
-| Hotkey | Action |
-| --- | --- |
-| `Ctrl+Alt+V` | Lock / unlock for moving |
-| `Ctrl+Alt+B` | Switch between orb and bars |
-| `Ctrl+Alt+Up` / `Down` | Bigger / smaller |
-| `Ctrl+Alt+Q` | Quit |
+| Hotkey                 | Action                      |
+| ---------------------- | --------------------------- |
+| `Ctrl+Alt+V`           | Lock / unlock for moving    |
+| `Ctrl+Alt+B`           | Switch between orb and bars |
+| `Ctrl+Alt+Up` / `Down` | Bigger / smaller            |
+| `Ctrl+Alt+Q`           | Quit                        |
 
 While unlocked: drag to move it, scroll to resize, `Esc` or right-click to lock
 again. `visualizer --help` shows all of this in a dialog.
@@ -117,18 +117,9 @@ the palette without a rebuild. The five colour stops near the top of
 `palette()` are the place to start; `src/core/aurora.hpp` holds the matching
 list used by bar mode, so change both to keep the two consistent.
 
-<<<<<<< HEAD
-<!-- <img src="https://github.com/user-attachments/assets/9400ee43-8f33-4258-ab64-2da620de4e90"
-     width="1366"
-     height="600"
-     alt="Video"> -->
-
-[Watch the video](https://github.com/user-attachments/assets/9400ee43-8f33-4258-ab64-2da620de4e90)
-=======
 ## Notes
 
 Motivated by [Tsoding (UI in C++)](https://www.youtube.com/watch?v=SRgLA8X5N_4).
->>>>>>> d28eaf1 (Add PATH installer and rewrite the docs)
 
 [Video of an earlier version](images/Visualiser.mp4)
 
