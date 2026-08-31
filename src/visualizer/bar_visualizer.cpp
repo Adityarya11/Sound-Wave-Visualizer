@@ -1,130 +1,97 @@
-#include "bar_visualizer.hpp"
-#include <cmath>
-#include <cstdlib>
-#include <ctime>
+#include "visualizer/bar_visualizer.hpp"
+
 #include <algorithm>
+#include <cmath>
 
-BarVisualizer::BarVisualizer(int barCount, float width, float height)
-    : m_barCount(barCount), m_width(width), m_height(height)
+#include "core/aurora.hpp"
+
+namespace
 {
-    std::srand(static_cast<unsigned int>(std::time(nullptr)));
-    m_smoothedValues.resize(barCount, 0.0f);
-    setupBars();
+// Fraction of the window height where the bars stand. The remainder below
+// carries the reflection.
+constexpr float kBaselineFraction = 0.66f;
+constexpr float kReflectionScale = 0.45f;
+constexpr float kGapFraction = 0.22f; // of one bar slot
+} // namespace
+
+BarVisualizer::BarVisualizer() = default;
+
+void BarVisualizer::resize(sf::Vector2f size)
+{
+    m_size = size;
 }
 
-void BarVisualizer::setupBars()
+void BarVisualizer::update(const VisualState &state, float)
 {
-    m_bars.clear();
-    m_bars.reserve(m_barCount);
-
-    float gap = 2.0f;
-    float totalGapSpace = gap * (m_barCount - 1);
-    float barWidth = (m_width - totalGapSpace) / m_barCount;
-
-    for (int i = 0; i < m_barCount; ++i)
+    const std::vector<float> *bands = state.bands;
+    if (bands == nullptr || bands->empty())
     {
-        sf::RectangleShape bar;
-        bar.setSize({barWidth, 10.0f});
-        bar.setFillColor(sf::Color(0, 255, 255, 200));
-
-        float xPos = i * (barWidth + gap);
-        bar.setPosition({xPos, m_height});
-        m_bars.push_back(bar);
-    }
-}
-
-void BarVisualizer::setSize(float width, float height)
-{
-    m_width = width;
-    m_height = height;
-    setupBars();
-}
-
-void BarVisualizer::update(const std::vector<float> &fftData)
-{
-    // === DEMO MODE (if no FFT data) ===
-    if (fftData.empty())
-    {
-        static float time = 0.0f;
-        time += 0.05f;
-
-        for (int i = 0; i < m_barCount; ++i)
-        {
-            float wave1 = std::sin(time + i * 0.2f);
-            float wave2 = std::sin(time * 0.5f + i * 0.1f);
-            float intensity = (wave1 + wave2 + 2.0f) / 4.0f;
-            float jitter = (static_cast<float>(rand() % 100) / 100.0f) * 0.2f;
-            intensity += jitter;
-
-            float barHeight = intensity * (m_height * 0.8f);
-            if (barHeight < 5.0f)
-                barHeight = 5.0f;
-
-            m_smoothedValues[i] = barHeight;
-            sf::Vector2f currentSize = m_bars[i].getSize();
-            m_bars[i].setSize({currentSize.x, -barHeight});
-
-            sf::Color color = sf::Color(0, 255, 255, 200);
-            if (intensity > 0.8f)
-                color = sf::Color(255, 255, 255, 220);
-            m_bars[i].setFillColor(color);
-        }
+        m_vertices.clear();
         return;
     }
 
-    // === REAL FFT DATA MODE ===
-    // Map FFT bins to our bar count
-    int fftSize = static_cast<int>(fftData.size());
+    const int bandCount = static_cast<int>(bands->size());
+    const int barCount = bandCount * 2;
 
-    for (int i = 0; i < m_barCount; ++i)
+    m_heights.resize(barCount);
+    for (int i = 0; i < barCount; ++i)
     {
-        // Map bar index to FFT bin range (logarithmic scaling for better visuals)
-        // Lower frequencies get more bars (they contain more musical info)
-        float t = static_cast<float>(i) / m_barCount;
-        int fftIndex = static_cast<int>(std::pow(t, 2.0f) * (fftSize / 2));
-        fftIndex = std::clamp(fftIndex, 0, fftSize - 1);
+        // Mirror around the centre: the two innermost bars are the lowest
+        // band, and pitch rises outward in both directions.
+        const int band = i < bandCount ? (bandCount - 1 - i) : (i - bandCount);
+        m_heights[i] = (*bands)[band];
+    }
 
-        // Get the FFT value (0.0 to 1.0)
-        float value = fftData[fftIndex];
+    const float slot = m_size.x / static_cast<float>(barCount);
+    const float gap = slot * kGapFraction;
+    const float barWidth = std::max(1.0f, slot - gap);
+    const float baseline = m_size.y * kBaselineFraction;
+    const float maxHeight = baseline * 0.94f;
 
-        // Apply some gain/scaling
-        value = std::clamp(value * 2.0f, 0.0f, 1.0f);
+    m_vertices.clear();
+    m_vertices.resize(static_cast<std::size_t>(barCount) * 12);
 
-        // Smooth the transition (prevents jittery bars)
-        float smoothing = 0.3f; // Lower = smoother, Higher = more reactive
-        m_smoothedValues[i] = m_smoothedValues[i] * (1.0f - smoothing) + value * smoothing;
+    std::size_t v = 0;
+    const auto quad = [&](float x0, float x1, float yTop, float yBottom,
+                          sf::Color top, sf::Color bottom) {
+        m_vertices[v + 0] = sf::Vertex{{x0, yTop}, top};
+        m_vertices[v + 1] = sf::Vertex{{x1, yTop}, top};
+        m_vertices[v + 2] = sf::Vertex{{x1, yBottom}, bottom};
+        m_vertices[v + 3] = sf::Vertex{{x0, yTop}, top};
+        m_vertices[v + 4] = sf::Vertex{{x1, yBottom}, bottom};
+        m_vertices[v + 5] = sf::Vertex{{x0, yBottom}, bottom};
+        v += 6;
+    };
 
-        // Calculate bar height
-        float barHeight = m_smoothedValues[i] * (m_height * 0.9f);
-        if (barHeight < 2.0f)
-            barHeight = 2.0f;
+    for (int i = 0; i < barCount; ++i)
+    {
+        const float value = std::clamp(m_heights[i], 0.0f, 1.0f);
+        const float height = std::max(2.0f, value * maxHeight);
 
-        // Update bar
-        sf::Vector2f currentSize = m_bars[i].getSize();
-        m_bars[i].setSize({currentSize.x, -barHeight});
+        const float x0 = static_cast<float>(i) * slot + gap * 0.5f;
+        const float x1 = x0 + barWidth;
+        const float yTop = baseline - height;
 
-        // Dynamic color based on intensity
-        sf::Color color;
-        if (m_smoothedValues[i] > 0.8f)
-        {
-            color = sf::Color(255, 100, 100, 230); // Red for peaks
-        }
-        else if (m_smoothedValues[i] > 0.5f)
-        {
-            color = sf::Color(255, 255, 100, 220); // Yellow for mid
-        }
-        else
-        {
-            color = sf::Color(0, 255, 255, 200); // Cyan for low
-        }
-        m_bars[i].setFillColor(color);
+        // Hue walks outward from the centre and brightens with amplitude, so
+        // the whole strip reads as one gradient instead of 128 separate bars.
+        const float spread = std::fabs(static_cast<float>(i) / (barCount - 1) - 0.5f) * 2.0f;
+        const float hue = state.hue + spread * 0.30f + value * 0.28f;
+
+        const sf::Color top = aurora::color(hue, (0.55f + 0.45f * value) * state.opacity);
+        const sf::Color bottom = aurora::color(hue - 0.12f, 0.22f * state.opacity);
+
+        quad(x0, x1, yTop, baseline, top, bottom);
+
+        const float reflectTop = baseline + m_size.y * 0.012f;
+        const float reflectBottom = std::min(m_size.y, reflectTop + height * kReflectionScale);
+        quad(x0, x1, reflectTop, reflectBottom,
+             aurora::color(hue, 0.26f * value * state.opacity),
+             aurora::color(hue, 0.0f));
     }
 }
 
-void BarVisualizer::draw(sf::RenderWindow &window)
+void BarVisualizer::draw(sf::RenderTarget &target)
 {
-    for (const auto &bar : m_bars)
-    {
-        window.draw(bar);
-    }
+    if (m_vertices.getVertexCount() > 0)
+        target.draw(m_vertices);
 }

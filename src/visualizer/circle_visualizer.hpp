@@ -1,24 +1,43 @@
 #pragma once
-#include <SFML/Graphics.hpp>
-#include <vector>
 
-class CircleVisualiser
+#include <SFML/Graphics.hpp>
+
+#include <array>
+#include <filesystem>
+
+#include "visualizer/visualizer_base.hpp"
+
+// The NCS-style orb. Unlike the bar mode this draws no per-band geometry:
+// the whole thing is one full-window shader pass, which is the only way to get
+// soft bloom. Rotated rectangles can only ever produce hard edges.
+class CircleVisualizer : public VisualizerBase
 {
 public:
-    CircleVisualiser(int barCount, float baseRadius, sf::Vector2f centrePosition);
+    CircleVisualizer();
 
-    void draw(sf::RenderWindow &window);
-    void update(const std::vector<float> &fftdata);
+    // Looks for aurora.frag next to the executable and falls back to the copy
+    // compiled into the binary. Returns false only if the GPU has no shader
+    // support at all, in which case the app switches to bar mode.
+    bool load(const std::filesystem::path &shaderPath);
 
-    void setCenter(sf::Vector2f center);
+    void resize(sf::Vector2f size) override;
+    void update(const VisualState &state, float dt) override;
+    void draw(sf::RenderTarget &target) override;
+
+    sf::Vector2u preferredSize(unsigned int scale) const override { return {scale, scale}; }
+
+    bool ready() const { return m_ready; }
 
 private:
-    int m_barCount;
-    float m_baseRadius;
-    sf::Vector2f m_center;
+    static constexpr int kTextureBands = 64;
 
-    std::vector<sf::RectangleShape> m_bars;
-    std::vector<float> m_smoothedValues;
+    void uploadSpectrum(const std::vector<float> &bands);
 
-    void setupBars();
+    sf::Shader m_shader;
+    sf::Texture m_spectrum;
+    sf::RectangleShape m_quad;
+    std::array<std::uint8_t, kTextureBands * 4> m_pixels{};
+
+    sf::Vector2f m_size{320.0f, 320.0f};
+    bool m_ready = false;
 };

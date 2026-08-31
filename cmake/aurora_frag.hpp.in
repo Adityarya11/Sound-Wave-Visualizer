@@ -1,0 +1,11 @@
+// Generated at configure time from assets/aurora.frag - do not edit.
+// The shader is baked into the binary so visualizer.exe works from anywhere
+// on PATH with no assets beside it; the loose file, when present, wins.
+#pragma once
+
+namespace assets
+{
+inline constexpr char kAuroraFrag[] = R"AURORA(
+@AURORA_FRAG_SOURCE@
+)AURORA";
+}

@@ -1,25 +1,31 @@
 #pragma once
+
 #include <SFML/Graphics.hpp>
+
 #include <vector>
 
-class BarVisualizer
+#include "visualizer/visualizer_base.hpp"
+
+// Linear spectrum bars, mirrored around the centre so the lowest bands sit in
+// the middle and rise outward. The old version indexed FFT bins directly with
+// a squared curve, which piled most bars onto the first handful of bass bins
+// and left the right-hand side permanently flat.
+class BarVisualizer : public VisualizerBase
 {
 public:
-    BarVisualizer(int barCount, float width, float height);
+    BarVisualizer();
 
-    // Update bars with FFT data (empty = demo mode)
-    void update(const std::vector<float> &fftData);
+    void resize(sf::Vector2f size) override;
+    void update(const VisualState &state, float dt) override;
+    void draw(sf::RenderTarget &target) override;
 
-    void draw(sf::RenderWindow &window);
-    void setSize(float width, float height);
+    sf::Vector2u preferredSize(unsigned int scale) const override
+    {
+        return {scale * 3u, scale * 3u / 4u};
+    }
 
 private:
-    int m_barCount;
-    float m_width;
-    float m_height;
-
-    std::vector<sf::RectangleShape> m_bars;
-    std::vector<float> m_smoothedValues; // For smooth animation
-
-    void setupBars();
+    sf::Vector2f m_size{960.0f, 240.0f};
+    sf::VertexArray m_vertices{sf::PrimitiveType::Triangles};
+    std::vector<float> m_heights;
 };

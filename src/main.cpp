@@ -1,193 +1,86 @@
-#include <SFML/Graphics.hpp>
-#include <SFML/Window.hpp>
-#include <SFML/Window/WindowHandle.hpp>
-#include <Windows.h>
-#include <dwmapi.h>
-#include <iostream>
-#include <optional>
-#include <vector>
-
-// ==========================================
-// 🔴 CRITICAL FIX: MiniAudio Implementation
-// This creates the actual code for the audio engine.
-// Without this, you get "Unresolved External Symbol" errors.
+// Sound Wave Visualizer - a per-pixel-transparent, always-on-top audio
+// overlay driven by WASAPI loopback.
+//
+// miniaudio is a header-only library: this translation unit is the one place
+// its implementation is compiled. Defining the macro anywhere else produces
+// duplicate symbols; omitting it entirely produces unresolved ones.
 #define MINIAUDIO_IMPLEMENTATION
 #include "miniaudio.h"
-// ==========================================
 
-// Audio & Processing
-#include "audio/audio_capture.hpp"
-#include "audio/fft_processor.hpp"
+#include <cstring>
 
-// Visualizer
-#include "visualizer/bar_visualizer.hpp"
-#include "visualizer/circle_visualizer.hpp"
+#include <windows.h>
 
-using namespace std;
+#include "core/app.hpp"
 
-// --- Transparency Helper ---
-void makeWindowTransparent(sf::RenderWindow &window)
+namespace
 {
-    HWND hwnd = static_cast<HWND>(window.getNativeHandle());
-
-    // 1. Set Layered Window Style (Required for transparency)
-    LONG style = GetWindowLong(hwnd, GWL_EXSTYLE);
-    SetWindowLong(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED);
-
-    // 2. Set Magenta (255, 0, 255) as the "Key" color
-    // Any pixel of this exact color becomes 100% transparent (invisible)
-    SetLayeredWindowAttributes(hwnd, RGB(255, 0, 255), 0, LWA_COLORKEY);
-
-    // 3. Optional: Add DWM Blur for smoother edges on Windows 10/11
-    DWM_BLURBEHIND bb = {0};
-    bb.dwFlags = DWM_BB_ENABLE | DWM_BB_BLURREGION;
-    bb.fEnable = TRUE;
-    bb.hRgnBlur = CreateRectRgn(0, 0, -1, -1);
-    DwmEnableBlurBehindWindow(hwnd, &bb);
-    DeleteObject(bb.hRgnBlur);
+void showHelp()
+{
+    MessageBoxW(nullptr,
+                L"Sound Wave Visualizer\n\n"
+                L"Runs as a transparent, always-on-top overlay and reacts to\n"
+                L"whatever Windows is playing. It fades away when audio stops.\n\n"
+                L"Global hotkeys (work from any application):\n"
+                L"  Ctrl+Alt+V    lock / unlock for moving\n"
+                L"  Ctrl+Alt+B    switch orb <-> bars\n"
+                L"  Ctrl+Alt+Up   larger\n"
+                L"  Ctrl+Alt+Down smaller\n"
+                L"  Ctrl+Alt+Q    quit\n\n"
+                L"While unlocked:\n"
+                L"  drag           move it\n"
+                L"  scroll wheel   resize\n"
+                L"  Esc / right-click  lock again\n\n"
+                L"Position, size and mode are saved to\n"
+                L"%APPDATA%\\Visualizer\\config.json.\n"
+                L"Edit aurora.frag next to the exe to retune the colours.",
+                L"Visualizer", MB_OK | MB_ICONINFORMATION);
 }
 
-void setAlwaysOnTop(sf::RenderWindow &window)
+bool isHelpFlag(const char *arg)
 {
-    HWND hwnd = static_cast<HWND>(window.getNativeHandle());
-    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    return std::strcmp(arg, "--help") == 0 || std::strcmp(arg, "-h") == 0 ||
+           std::strcmp(arg, "/?") == 0;
 }
+} // namespace
 
-// --- Main ---
-int main()
+int main(int argc, char **argv)
 {
-    constexpr unsigned int WINDOW_WIDTH = 800;
-    constexpr unsigned int WINDOW_HEIGHT = 200;
-    constexpr int NUM_BARS = 64;
-
-    // Create Window
-    sf::RenderWindow window(
-        sf::VideoMode({WINDOW_WIDTH, WINDOW_HEIGHT}),
-        "SoundWave",
-        sf::Style::None); // Borderless
-    window.setFramerateLimit(60);
-
-    // Position Window
-    sf::VideoMode desktop = sf::VideoMode::getDesktopMode();
-    window.setPosition({(int)(desktop.size.x - WINDOW_WIDTH) / 2,
-                        (int)(desktop.size.y - WINDOW_HEIGHT - 60)});
-
-    // Apply Transparency Fixes
-    makeWindowTransparent(window);
-    setAlwaysOnTop(window);
-
-    // Init Audio
-    AudioCapture audioCapture;
-    if (!audioCapture.init())
+    for (int i = 1; i < argc; ++i)
     {
-        std::cerr << "[ERROR] Failed to init audio capture!" << std::endl;
-    }
-    else
-    {
-        std::cout << "[INFO] Audio capture ready." << std::endl;
+        if (isHelpFlag(argv[i]))
+        {
+            showHelp();
+            return 0;
+        }
     }
 
-    // Init Processors
-    FftProcessor fftProcessor(1024);
-    std::vector<float> fftOutput;
-
-    // init
-    //  bar visualiser
-    BarVisualizer barVis(NUM_BARS, (float)WINDOW_WIDTH, (float)WINDOW_HEIGHT);
-    // circular visualiser
-    CircleVisualiser circleVis(120, 100.0f, {(float)WINDOW_WIDTH / 2.0f, (float)WINDOW_HEIGHT / 2.0f});
-
-    // Background (Toggle with 'B')
-    sf::RectangleShape background(sf::Vector2f((float)WINDOW_WIDTH, (float)WINDOW_HEIGHT));
-    background.setFillColor(sf::Color(15, 15, 25, 200)); // Semi-transparent dark
-
-    bool isDragging = false;
-    sf::Vector2i dragOffset;
-    bool showBackground = true;
-
-    // Load the app Icon
-    sf ::Image icon;
-    if (icon.loadFromFile("images/logo.png"))
+    // A second copy would fight the first one for the topmost slot and double
+    // the WASAPI load for no benefit.
+    HANDLE instanceLock = CreateMutexW(nullptr, TRUE, L"Local\\SoundWaveVisualizerSingleton");
+    if (instanceLock != nullptr && GetLastError() == ERROR_ALREADY_EXISTS)
     {
-        window.setIcon(icon);
+        CloseHandle(instanceLock);
+        return 0;
     }
 
-    // toggle state  between the visualisers
-    int currentVisualiser = 0; // 0 = Bar, 1 = circle,  toggle with V
-
-    while (window.isOpen())
+    App app;
+    if (!app.init())
     {
-        while (const std::optional event = window.pollEvent())
-        {
-            if (event->is<sf::Event::Closed>())
-                window.close();
-
-            if (const auto *key = event->getIf<sf::Event::KeyPressed>())
-            {
-                if (key->code == sf::Keyboard::Key::Escape)
-                    window.close();
-                if (key->code == sf::Keyboard::Key::B)
-                    showBackground = !showBackground;
-
-                if (key->code == sf::Keyboard::Key::V)
-                    currentVisualiser = (currentVisualiser + 1) % 2; // visuliser toggle button
-            }
-
-            if (const auto *mouse = event->getIf<sf::Event::MouseButtonPressed>())
-            {
-                if (mouse->button == sf::Mouse::Button::Left)
-                {
-                    isDragging = true;
-                    dragOffset = sf::Mouse::getPosition(window);
-                }
-            }
-            if (const auto *mouse = event->getIf<sf::Event::MouseButtonReleased>())
-            {
-                if (mouse->button == sf::Mouse::Button::Left)
-                    isDragging = false;
-            }
-        }
-
-        if (isDragging)
-            window.setPosition(sf::Mouse::getPosition() - dragOffset);
-
-        // Audio Logic
-        std::vector<float> audioBuffer = audioCapture.getAudioBuffer();
-        if (!audioBuffer.empty())
-            fftProcessor.calculate(audioBuffer, fftOutput);
-
-        // new visualiser output for the toggle
-        if (currentVisualiser == 0)
-        {
-            barVis.update(fftOutput);
-        }
-        else
-        {
-            circleVis.update(fftOutput);
-        }
-
-        // Render
-        // 1. Clear with Magenta (The Key Color) -> This punches the hole in the window
-        window.clear(sf::Color(255, 0, 255));
-
-        // 2. Draw Background (Optional) -> This draws ON TOP of the transparent hole
-        if (showBackground)
-        {
-            window.draw(background);
-        }
-
-        // 3. Draw Bars
-        if (currentVisualiser == 0)
-        {
-            barVis.draw(window);
-        }
-        else
-        {
-            circleVis.draw(window);
-        }
-
-        window.display();
+        MessageBoxW(nullptr,
+                    L"Could not create the overlay window.\n"
+                    L"A GPU with OpenGL support is required.",
+                    L"Visualizer", MB_OK | MB_ICONERROR);
+        return 1;
     }
 
-    return 0;
+    const int result = app.run();
+
+    if (instanceLock != nullptr)
+    {
+        ReleaseMutex(instanceLock);
+        CloseHandle(instanceLock);
+    }
+
+    return result;
 }
