@@ -1,125 +1,108 @@
-#include "circle_visualizer.hpp"
-#include <cmath>
+#include "visualizer/circle_visualizer.hpp"
+
 #include <algorithm>
-#include <iostream>
+#include <cmath>
+#include <fstream>
+#include <sstream>
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
+#include "aurora_frag.hpp"
 
-CircleVisualiser::CircleVisualiser(int barCount, float baseRadius, sf::Vector2f centerPosition)
-    : m_barCount(barCount), m_baseRadius(baseRadius), m_center(centerPosition)
+CircleVisualizer::CircleVisualizer()
 {
-    m_smoothedValues.resize(barCount, 0.0f);
-    setupBars();
+    m_quad.setSize(m_size);
+    m_pixels.fill(0);
 }
 
-void CircleVisualiser::setupBars()
+bool CircleVisualizer::load(const std::filesystem::path &shaderPath)
 {
-    m_bars.clear();
-    m_bars.reserve(m_barCount);
+    if (!sf::Shader::isAvailable())
+        return false;
 
-    // We want the circle to be perfectly distributed over 360 degrees
-    float angleStep = 360.0f / m_barCount;
-
-    for (int i = 0; i < m_barCount; ++i)
+    // A loose aurora.frag beside the exe wins, so the look can be retuned
+    // without a rebuild. The baked-in copy is the guaranteed fallback.
+    std::string source;
+    if (std::ifstream file{shaderPath})
     {
-        sf::RectangleShape bar;
-        // Width is fixed, height will change with music
-        bar.setSize({4.0f, 10.0f});
-
-        // Origin at the "bottom center" of the bar so it grows outward from the circle rim
-        bar.setOrigin({2.0f, 0.0f});
-
-        // Initial position (will be updated in loop, but setting rotation here matters)
-        bar.setRotation(sf::degrees(i * angleStep));
-
-        m_bars.push_back(bar);
+        std::ostringstream buffer;
+        buffer << file.rdbuf();
+        source = buffer.str();
     }
-}
 
-void CircleVisualiser::setCenter(sf::Vector2f center)
-{
-    m_center = center;
-}
-
-void CircleVisualiser::update(const std::vector<float> &fftData)
-{
-    int fftSize = static_cast<int>(fftData.size());
-
-    // --- DEMO MODE (No Audio) ---
-    if (fftData.empty())
+    if (source.empty() || !m_shader.loadFromMemory(source, sf::Shader::Type::Fragment))
     {
-        static float time = 0.0f;
-        time += 0.02f;
-        for (int i = 0; i < m_barCount; ++i)
+        if (!m_shader.loadFromMemory(assets::kAuroraFrag, sf::Shader::Type::Fragment))
+            return false;
+    }
+
+    if (!m_spectrum.resize({static_cast<unsigned int>(kTextureBands), 1u}))
+        return false;
+
+    // Linear filtering across the row is what turns 64 discrete bands into the
+    // continuous undulating rim; clamping stops band 63 bleeding into band 0.
+    m_spectrum.setSmooth(true);
+    m_spectrum.setRepeated(false);
+
+    m_ready = true;
+    return true;
+}
+
+void CircleVisualizer::resize(sf::Vector2f size)
+{
+    m_size = size;
+    m_quad.setSize(size);
+}
+
+void CircleVisualizer::uploadSpectrum(const std::vector<float> &bands)
+{
+    const int count = static_cast<int>(bands.size());
+
+    for (int i = 0; i < kTextureBands; ++i)
+    {
+        float v = 0.0f;
+        if (count > 0)
         {
-            float val = (std::sin(time * 5.0f + i * 0.5f) + 1.0f) * 0.5f;
-            m_smoothedValues[i] = val * 50.0f;
+            // Resample whatever band count the analyser produced onto the
+            // fixed texture width.
+            const float t = static_cast<float>(i) / (kTextureBands - 1);
+            const float x = t * (count - 1);
+            const int a = static_cast<int>(x);
+            const int b = std::min(a + 1, count - 1);
+            v = bands[a] + (bands[b] - bands[a]) * (x - static_cast<float>(a));
         }
-    }
-    // --- REAL MODE ---
-    else
-    {
-        // We want to mirror the spectrum to make it look symmetrical (NCS style)
-        // Left side of circle = low->high, Right side = high->low (or vice versa)
-        int halfBars = m_barCount / 2;
 
-        for (int i = 0; i < halfBars; ++i)
-        {
-            // Logarithmic index mapping
-            float t = (float)i / halfBars;
-            int fftIndex = static_cast<int>(std::pow(t, 2.0f) * (fftSize / 4)); // Use lower quarter of FFT for bass
-            fftIndex = std::clamp(fftIndex, 0, fftSize - 1);
-
-            float value = std::clamp(fftData[fftIndex] * 4.0f, 0.0f, 1.0f); // Gain up
-
-            // Smooth
-            m_smoothedValues[i] = m_smoothedValues[i] * 0.8f + value * 0.2f;
-
-            // Mirror: Apply this value to both sides of the circle
-            int mirrorIndex = m_barCount - 1 - i;
-            m_smoothedValues[mirrorIndex] = m_smoothedValues[i];
-        }
+        const auto q = static_cast<std::uint8_t>(std::clamp(v, 0.0f, 1.0f) * 255.0f + 0.5f);
+        m_pixels[i * 4 + 0] = q;
+        m_pixels[i * 4 + 1] = q;
+        m_pixels[i * 4 + 2] = q;
+        m_pixels[i * 4 + 3] = 255;
     }
 
-    // Update Geometry
-    float angleStep = (2.0f * M_PI) / m_barCount;
-
-    for (int i = 0; i < m_barCount; ++i)
-    {
-        float angle = i * angleStep; // Radians
-
-        // Position: Start at center + radius offset
-        float x = m_center.x + std::cos(angle) * m_baseRadius;
-        float y = m_center.y + std::sin(angle) * m_baseRadius;
-
-        m_bars[i].setPosition({x, y});
-
-        // Height: Base value + audio kick
-        float h = m_smoothedValues[i] * 100.0f; // Max height 100
-        if (h < 2.0f)
-            h = 2.0f;
-
-        m_bars[i].setSize({3.0f, h}); // Grow outward
-
-        // Color: Make it "Amoeba" like (Green/Blue/Pink)
-        sf::Color c(
-            (std::uint8_t)(std::sin(angle + h * 0.01f) * 127 + 128),
-            200,
-            (std::uint8_t)(std::cos(angle) * 127 + 128),
-            220);
-        m_bars[i].setFillColor(c);
-
-        // Ensure rotation points outward (degrees)
-        m_bars[i].setRotation(sf::degrees(i * (360.0f / m_barCount) + 90.0f));
-    }
+    m_spectrum.update(m_pixels.data());
 }
 
-void CircleVisualiser::draw(sf::RenderWindow &window)
+void CircleVisualizer::update(const VisualState &state, float)
 {
-    for (const auto &bar : m_bars)
-    {
-        window.draw(bar);
-    }
+    if (!m_ready)
+        return;
+
+    static const std::vector<float> empty;
+    uploadSpectrum(state.bands != nullptr ? *state.bands : empty);
+
+    m_shader.setUniform("u_resolution", sf::Glsl::Vec2(m_size));
+    m_shader.setUniform("u_time", state.time);
+    m_shader.setUniform("u_beat", state.beat);
+    m_shader.setUniform("u_level", state.level);
+    m_shader.setUniform("u_opacity", state.opacity);
+    m_shader.setUniform("u_hue", state.hue);
+    m_shader.setUniform("u_spec", m_spectrum);
+}
+
+void CircleVisualizer::draw(sf::RenderTarget &target)
+{
+    if (!m_ready)
+        return;
+
+    sf::RenderStates states;
+    states.shader = &m_shader;
+    target.draw(m_quad, states);
 }
